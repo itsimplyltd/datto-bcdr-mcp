@@ -7,7 +7,7 @@
  * simply means the host renders no card while the JSON payload is unchanged.
  */
 
-import type { BcdrDevice } from "@wyre-technology/node-datto-bcdr";
+import type { BcdrDevice } from "./datto-api.js";
 
 export const DEVICE_CARD_RESOURCE_URI = "ui://datto-bcdr/device-card.html";
 

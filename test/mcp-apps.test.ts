@@ -25,10 +25,15 @@ import { DEVICE_CARD_HTML } from "../src/generated/device-card-html.js";
 
 const mockDevicesGet = vi.fn();
 
-vi.mock("@wyre-technology/node-datto-bcdr", () => {
+// Partial mock: keep the real error classes / pure helpers (SINCE_DAYS_MIN
+// etc. are read at ListTools time to build tool descriptions) and swap out
+// only the class this test drives.
+vi.mock("../src/datto-api.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/datto-api.js")>();
   return {
+    ...actual,
     DattoBcdrClient: class {
-      devices = { get: mockDevicesGet };
+      getDevice = mockDevicesGet;
     },
   };
 });

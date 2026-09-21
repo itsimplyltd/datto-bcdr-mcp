@@ -13,9 +13,11 @@ import {
   ListResourcesRequestSchema,
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
+  type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { DattoBcdrClient } from "@wyre-technology/node-datto-bcdr";
+import { DattoBcdrClient, type BcdrAsset, isValidSinceDays, SINCE_DAYS_MIN, SINCE_DAYS_MAX } from "./datto-api.js";
 import { elicitSelection, elicitText } from "./utils/elicitation.js";
+import { wrapUntrustedContent } from "./utils/untrusted-content.js";
 import {
   DEVICE_CARD_META,
   DEVICE_CARD_RESOURCE_URI,
@@ -44,8 +46,8 @@ function getCredentials(): DattoBcdrCredentials | null {
 }
 
 function createClient(creds: DattoBcdrCredentials): DattoBcdrClient {
-  // The Datto BCDR API uses "public/private key" in its docs but the SDK
-  // mirrors node-datto-rmm naming (apiKey/apiSecretKey). Translate at the
+  // The Datto BCDR API uses "public/private key" in its docs but the wire
+  // auth (HTTP Basic) is keyed apiKey/apiSecretKey. Translate at the
   // boundary so user-facing credential labels stay consistent with Datto's.
   return new DattoBcdrClient({
     apiKey: creds.publicKey,
@@ -115,60 +117,75 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
         },
         {
           name: "datto_bcdr_get_asset",
-          description: "Get details for a specific protected agent on an appliance.",
+          description:
+            "Get details for a specific protected agent (asset) on an appliance, identified by its `volume` " +
+            "(the asset's 32-character hex GUID, not a friendly name). `agentId` is accepted as a deprecated " +
+            "alias for `volume`.",
           inputSchema: {
             type: "object",
             properties: {
               serialNumber: { type: "string", description: "Appliance serial number" },
-              agentId: { type: "string", description: "Agent identifier" },
+              volume: { type: "string", description: "Asset volume GUID (32-char hex)" },
+              agentId: { type: "string", description: "Deprecated alias for `volume`" },
             },
-            required: ["serialNumber", "agentId"],
+            required: ["serialNumber"],
           },
         },
         {
           name: "datto_bcdr_list_backups",
-          description: "List recovery points / backups for a protected agent on an appliance.",
+          description:
+            "List recovery points / backups for a protected agent, identified by `volume` (deprecated alias: " +
+            "`agentId`). Datto has no dedicated backups endpoint — this returns the `backups` array already " +
+            "embedded in the asset record.",
           inputSchema: {
             type: "object",
             properties: {
               serialNumber: { type: "string", description: "Appliance serial number" },
-              agentId: { type: "string", description: "Agent identifier" },
+              volume: { type: "string", description: "Asset volume GUID (32-char hex)" },
+              agentId: { type: "string", description: "Deprecated alias for `volume`" },
             },
-            required: ["serialNumber", "agentId"],
+            required: ["serialNumber"],
           },
         },
         {
           name: "datto_bcdr_list_screenshots",
-          description: "List screenshot verifications for a protected agent.",
+          description:
+            "Get screenshot verification history for a protected agent, identified by `volume` (deprecated " +
+            "alias: `agentId`). This is verification history read off the asset record (last attempt status, " +
+            "last screenshot URL, and per-backup advanced-verification results) — Datto has no separate " +
+            "screenshot archive endpoint to list from.",
           inputSchema: {
             type: "object",
             properties: {
               serialNumber: { type: "string", description: "Appliance serial number" },
-              agentId: { type: "string", description: "Agent identifier" },
+              volume: { type: "string", description: "Asset volume GUID (32-char hex)" },
+              agentId: { type: "string", description: "Deprecated alias for `volume`" },
             },
-            required: ["serialNumber", "agentId"],
+            required: ["serialNumber"],
           },
         },
         {
           name: "datto_bcdr_get_screenshot",
           description:
-            "Fetch a specific screenshot verification PNG. Returns base64-encoded image content.",
+            "Fetch the latest screenshot verification image (JPEG) for a protected agent, identified by " +
+            "`volume` (deprecated alias: `agentId`). Only the latest screenshot is available — Datto's API has " +
+            "no endpoint for a historical screenshot by epoch, so there is no way to ask for one.",
           inputSchema: {
             type: "object",
             properties: {
               serialNumber: { type: "string", description: "Appliance serial number" },
-              agentId: { type: "string", description: "Agent identifier" },
-              epoch: {
-                type: "number",
-                description: "Epoch timestamp of the screenshot to retrieve",
-              },
+              volume: { type: "string", description: "Asset volume GUID (32-char hex)" },
+              agentId: { type: "string", description: "Deprecated alias for `volume`" },
             },
-            required: ["serialNumber", "agentId", "epoch"],
+            required: ["serialNumber"],
           },
         },
         {
           name: "datto_bcdr_get_offsite_status",
-          description: "Get off-site sync status for an appliance.",
+          description:
+            "Get off-site sync status for an appliance. Datto has no dedicated offsite-status endpoint — this " +
+            "composes the device's storage totals with each protected asset's `latestOffsite` timestamp. An " +
+            "asset with no offsite point recorded is reported as such explicitly, never as 0 or an error.",
           inputSchema: {
             type: "object",
             properties: {
@@ -180,10 +197,16 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
         {
           name: "datto_bcdr_list_alerts",
           description:
-            "List partner portal alerts. If date range is omitted, the user will be prompted to choose a window.",
+            "List BCDR alerts. Alerts are per-appliance — omit `serialNumber` to fan out and query every " +
+            "appliance in the portal (the useful default, but one round trip per appliance), or pass it to " +
+            "query a single device. If date range is omitted, the user will be prompted to choose a window.",
           inputSchema: {
             type: "object",
             properties: {
+              serialNumber: {
+                type: "string",
+                description: "Restrict to a single appliance (optional — omit to query every appliance)",
+              },
               since: { type: "string", description: "ISO 8601 start datetime (optional)" },
               until: { type: "string", description: "ISO 8601 end datetime (optional)" },
               page: { type: "number", description: "Page number (default: 1)", default: 1 },
@@ -194,12 +217,17 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
         {
           name: "datto_bcdr_list_activity",
           description:
-            "List activity log entries. If date range is omitted, the user will be prompted.",
+            `List activity log entries from the last \`sinceDays\` days (integer, ${SINCE_DAYS_MIN}-${SINCE_DAYS_MAX}, ` +
+            "default 7 — this is Datto's only filter on this endpoint, a lookback window in days, not a date; " +
+            "there is no `until`).",
           inputSchema: {
             type: "object",
             properties: {
-              since: { type: "string", description: "ISO 8601 start datetime (optional)" },
-              until: { type: "string", description: "ISO 8601 end datetime (optional)" },
+              sinceDays: {
+                type: "number",
+                description: `Days to look back (${SINCE_DAYS_MIN}-${SINCE_DAYS_MAX}, default 7)`,
+                default: 7,
+              },
               page: { type: "number", description: "Page number (default: 1)", default: 1 },
               perPage: { type: "number", description: "Results per page (default: 250)", default: 250 },
             },
@@ -251,9 +279,17 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
   // Helpers
   // -------------------------------------------------------------------------
 
-  // Hard cap to keep one tool call from streaming the entire alert/activity
-  // history when the user picks "no filter" — a busy partner can have tens of
-  // thousands of records.
+  function errorResult(message: string): CallToolResult {
+    return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+  }
+
+  function jsonResult(payload: unknown): CallToolResult {
+    return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
+  }
+
+  // Hard cap to keep one tool call from streaming the entire alert history
+  // when the user picks "no filter" — a busy partner can have thousands of
+  // alerts once fanned out across every appliance.
   const DATE_FILTER_PAGE_CAP = 2000;
 
   interface DateRangeMs {
@@ -271,10 +307,13 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
     [Symbol.asyncIterator](): AsyncIterator<T>;
   }
 
-  // Datto BCDR's alert + activity endpoints don't accept date query params,
-  // so we paginate via the SDK's async iterator and filter per-item. Stops
-  // early when the cap is hit so a "no filter" call doesn't enumerate forever.
-  async function collectWithDateFilter<T extends { createdAt?: number; timestamp?: number }>(
+  // Datto BCDR's alert endpoint doesn't accept date query params, so we
+  // paginate via the client's async generator and filter per-item. Stops
+  // early when the cap is hit so a "no filter" call doesn't enumerate
+  // forever. NOTE: measured alert items carry only dateTriggered/dateSent,
+  // not createdAt/timestamp, so this filter is currently a no-op against
+  // real alert data — see this task's report.
+  async function collectWithDateFilter<T extends Record<string, unknown>>(
     iterable: PaginatedIterableLike<T>,
     range: DateRangeMs
   ): Promise<T[]> {
@@ -283,7 +322,7 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
     const out: T[] = [];
     for await (const item of iterable) {
       const raw = item.createdAt ?? item.timestamp;
-      if (raw != null) {
+      if (typeof raw === "number") {
         const ts = normalizeTs(raw);
         if (ts < sinceMs || ts > untilMs) continue;
       }
@@ -370,13 +409,8 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
 
     if (choice === "__list__") {
       try {
-        const devices = await client.devices.list({ page: 1, perPage: 50 });
-        const items: Array<{ serialNumber: string; hostname?: string; name?: string }> = Array.isArray(
-          (devices as { items?: unknown }).items
-        )
-          ? ((devices as { items: Array<{ serialNumber: string; hostname?: string; name?: string }> }).items)
-          : (Array.isArray(devices) ? (devices as Array<{ serialNumber: string; hostname?: string; name?: string }>) : []);
-
+        const devices = await client.listDevices({ page: 1, perPage: 50 });
+        const items = devices.items ?? [];
         if (items.length === 0) return null;
 
         const options = items.slice(0, 25).map((d) => ({
@@ -397,25 +431,22 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
     return null;
   }
 
+  /** `volume` is the current parameter name; `agentId` is accepted as a deprecated alias. */
+  function resolveVolume(args: { volume?: string; agentId?: string }): string | undefined {
+    return args.volume ?? args.agentId;
+  }
+
   // -------------------------------------------------------------------------
   // Tool call handler
   // -------------------------------------------------------------------------
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
+  async function handleToolCall(name: string, args: Record<string, unknown> | undefined): Promise<CallToolResult> {
     const creds = credentialOverrides ?? getCredentials();
 
     if (!creds) {
-      return {
-        content: [
-          {
-            type: "text",
-            text:
-              "Error: No API credentials provided. Please configure DATTO_BCDR_PUBLIC_KEY and DATTO_BCDR_PRIVATE_KEY environment variables (or pass them as gateway headers).",
-          },
-        ],
-        isError: true,
-      };
+      return errorResult(
+        "No API credentials provided. Please configure DATTO_BCDR_PUBLIC_KEY and DATTO_BCDR_PRIVATE_KEY environment variables (or pass them as gateway headers)."
+      );
     }
 
     const client = createClient(creds);
@@ -424,16 +455,16 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
       switch (name) {
         case "datto_bcdr_list_devices": {
           const params = (args ?? {}) as { page?: number; perPage?: number };
-          const result = await client.devices.list({
+          const result = await client.listDevices({
             page: params.page ?? 1,
             perPage: params.perPage ?? 250,
           });
-          return { content: [{ type: "text", text: JSON.stringify(result ?? [], null, 2) }] };
+          return jsonResult(result);
         }
 
         case "datto_bcdr_get_device": {
           const { serialNumber } = args as { serialNumber: string };
-          const device = await client.devices.get(serialNumber);
+          const device = await client.getDevice(serialNumber);
           // MCP Apps: attach the normalized payload the ui:// device card
           // renders from. Best-effort — a null card just means no UI surface.
           let card: DeviceCard | null = null;
@@ -443,56 +474,62 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
             // Card building must never break the tool result.
           }
           const payload = card ? { ...device, _card: card } : device;
-          return { content: [{ type: "text", text: JSON.stringify(payload ?? {}, null, 2) }] };
+          return jsonResult(payload ?? {});
         }
 
         case "datto_bcdr_list_assets": {
           const params = (args ?? {}) as { serialNumber?: string };
           const sn = await resolveSerialNumber(client, params.serialNumber);
-          if (!sn) {
-            return {
-              content: [{ type: "text", text: "Error: serialNumber is required." }],
-              isError: true,
-            };
-          }
-          const assets = await client.assets.list(sn);
-          return { content: [{ type: "text", text: JSON.stringify(assets ?? [], null, 2) }] };
+          if (!sn) return errorResult("serialNumber is required.");
+          const assets = await client.listAssets(sn);
+          return jsonResult(assets);
         }
 
         case "datto_bcdr_get_asset": {
-          const { serialNumber, agentId } = args as { serialNumber: string; agentId: string };
-          const asset = await client.assets.get(serialNumber, agentId);
-          return { content: [{ type: "text", text: JSON.stringify(asset ?? {}, null, 2) }] };
+          const params = args as { serialNumber: string; volume?: string; agentId?: string };
+          const volume = resolveVolume(params);
+          if (!volume) return errorResult("volume is required.");
+          const asset = await client.getAsset(params.serialNumber, volume);
+          return jsonResult(asset);
         }
 
         case "datto_bcdr_list_backups": {
-          const { serialNumber, agentId } = args as { serialNumber: string; agentId: string };
-          const backups = await client.backups.list(serialNumber, agentId);
-          return { content: [{ type: "text", text: JSON.stringify(backups ?? [], null, 2) }] };
+          const params = args as { serialNumber: string; volume?: string; agentId?: string };
+          const volume = resolveVolume(params);
+          if (!volume) return errorResult("volume is required.");
+          const asset = await client.getAsset(params.serialNumber, volume);
+          return jsonResult(asset.backups ?? []);
         }
 
         case "datto_bcdr_list_screenshots": {
-          const { serialNumber, agentId } = args as { serialNumber: string; agentId: string };
-          const shots = await client.screenshots.list(serialNumber, agentId);
-          return { content: [{ type: "text", text: JSON.stringify(shots ?? [], null, 2) }] };
+          const params = args as { serialNumber: string; volume?: string; agentId?: string };
+          const volume = resolveVolume(params);
+          if (!volume) return errorResult("volume is required.");
+          const asset: BcdrAsset = await client.getAsset(params.serialNumber, volume);
+          const verification = {
+            lastScreenshotAttempt: asset.lastScreenshotAttempt ?? null,
+            lastScreenshotAttemptStatus: asset.lastScreenshotAttemptStatus ?? null,
+            lastScreenshotUrl: asset.lastScreenshotUrl ?? null,
+            // Per-backup verification history, not a separate screenshot archive.
+            backupScreenshotVerifications: (asset.backups ?? []).map((backup) => ({
+              timestamp: backup.timestamp,
+              screenshotVerification: backup.advancedVerification?.screenshotVerification ?? null,
+            })),
+          };
+          return jsonResult(verification);
         }
 
         case "datto_bcdr_get_screenshot": {
-          const { serialNumber, agentId, epoch } = args as {
-            serialNumber: string;
-            agentId: string;
-            epoch: number;
-          };
-          const buffer = await client.screenshots.getImage(serialNumber, agentId, epoch);
-          const data: Buffer = Buffer.isBuffer(buffer)
-            ? (buffer as Buffer)
-            : Buffer.from(buffer as unknown as ArrayBuffer);
+          const params = args as { serialNumber: string; volume?: string; agentId?: string };
+          const volume = resolveVolume(params);
+          if (!volume) return errorResult("volume is required.");
+          const { buffer, contentType } = await client.getScreenshot(params.serialNumber, volume);
           return {
             content: [
               {
                 type: "image",
-                data: data.toString("base64"),
-                mimeType: "image/png",
+                data: buffer.toString("base64"),
+                mimeType: contentType || "image/jpeg",
               },
             ],
           };
@@ -500,35 +537,86 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
 
         case "datto_bcdr_get_offsite_status": {
           const { serialNumber } = args as { serialNumber: string };
-          const status = await client.offsite.get(serialNumber);
-          return { content: [{ type: "text", text: JSON.stringify(status ?? {}, null, 2) }] };
+          const [device, assets] = await Promise.all([
+            client.getDevice(serialNumber),
+            client.listAssets(serialNumber),
+          ]);
+          const status = {
+            serialNumber,
+            offsiteStorageUsed: device.offsiteStorageUsed ?? null,
+            localStorageUsed: device.localStorageUsed ?? null,
+            localStorageAvailable: device.localStorageAvailable ?? null,
+            totalManagedDisk: device.totalManagedDisk ?? null,
+            assets: assets.map((asset) => ({
+              volume: asset.volume,
+              name: asset.name ?? null,
+              // null is a real, meaningful state here — "no offsite point
+              // recorded" — never collapse it to 0 or report it as unknown.
+              latestOffsite: asset.latestOffsite ?? null,
+              latestOffsiteStatus:
+                asset.latestOffsite == null ? "no offsite point recorded" : "offsite point recorded",
+            })),
+          };
+          return jsonResult(status);
         }
 
         case "datto_bcdr_list_alerts": {
-          const range = await resolveDateRange((args ?? {}) as { since?: string; until?: string });
-          const alerts = await collectWithDateFilter(client.alerts.listAll(), range);
-          return { content: [{ type: "text", text: JSON.stringify(alerts, null, 2) }] };
+          const params = (args ?? {}) as {
+            serialNumber?: string;
+            since?: string;
+            until?: string;
+            page?: number;
+            perPage?: number;
+          };
+          const range = await resolveDateRange({ since: params.since, until: params.until });
+          const alerts = await collectWithDateFilter(
+            client.listAlerts({ serialNumber: params.serialNumber, page: params.page, perPage: params.perPage }),
+            range
+          );
+          return jsonResult(alerts);
         }
 
         case "datto_bcdr_list_activity": {
-          const range = await resolveDateRange((args ?? {}) as { since?: string; until?: string });
-          const activity = await collectWithDateFilter(client.activity.listAll(), range);
-          return { content: [{ type: "text", text: JSON.stringify(activity, null, 2) }] };
+          const params = (args ?? {}) as { sinceDays?: number; page?: number; perPage?: number };
+          const sinceDays = params.sinceDays ?? 7;
+          if (!isValidSinceDays(sinceDays)) {
+            return errorResult(
+              `sinceDays must be an integer between ${SINCE_DAYS_MIN} and ${SINCE_DAYS_MAX}, got ${JSON.stringify(params.sinceDays)}.`
+            );
+          }
+          const activity = await client.listActivity(sinceDays, { page: params.page, perPage: params.perPage });
+          return jsonResult(activity);
         }
 
         default:
-          return {
-            content: [{ type: "text", text: `Unknown tool: ${name}` }],
-            isError: true,
-          };
+          return errorResult(`Unknown tool: ${name}`);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return {
-        content: [{ type: "text", text: `Error: ${message}` }],
-        isError: true,
-      };
+      return errorResult(message);
     }
+  }
+
+  /**
+   * Untrusted-content marking happens at this single outer choke point, not
+   * sprinkled through individual cases — see utils/untrusted-content.ts.
+   * Error responses and the binary image block (datto_bcdr_get_screenshot)
+   * are never wrapped: errors carry no external content, and the wrapper
+   * only knows how to annotate text.
+   */
+  function markUntrusted(name: string, result: CallToolResult): CallToolResult {
+    if (result.isError) return result;
+    return {
+      ...result,
+      content: result.content.map((item) =>
+        item.type === "text" ? { ...item, text: wrapUntrustedContent(name, item.text) } : item
+      ),
+    };
+  }
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: args } = request.params;
+    return markUntrusted(name, await handleToolCall(name, args));
   });
 
   return server;
