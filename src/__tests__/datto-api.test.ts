@@ -6,10 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeIndexKeyedAssets,
   unwrapAssetArray,
-  isValidSinceDays,
   DattoBcdrNotFoundError,
-  SINCE_DAYS_MIN,
-  SINCE_DAYS_MAX,
 } from "../datto-api.js";
 
 describe("normalizeIndexKeyedAssets", () => {
@@ -58,32 +55,3 @@ describe("unwrapAssetArray", () => {
   });
 });
 
-describe("isValidSinceDays", () => {
-  it(`rejects 0 (below the ${SINCE_DAYS_MIN}-day floor)`, () => {
-    expect(isValidSinceDays(0)).toBe(false);
-  });
-
-  it(`rejects ${SINCE_DAYS_MAX + 1} (above the ${SINCE_DAYS_MAX}-day ceiling)`, () => {
-    expect(isValidSinceDays(31)).toBe(false);
-  });
-
-  it("rejects non-integers", () => {
-    expect(isValidSinceDays(1.5)).toBe(false);
-    expect(isValidSinceDays(7.1)).toBe(false);
-  });
-
-  it("rejects non-numbers (e.g. a numeric string)", () => {
-    expect(isValidSinceDays("7")).toBe(false);
-    expect(isValidSinceDays(undefined)).toBe(false);
-    expect(isValidSinceDays(null)).toBe(false);
-  });
-
-  it(`accepts the boundary values ${SINCE_DAYS_MIN} and ${SINCE_DAYS_MAX}`, () => {
-    expect(isValidSinceDays(SINCE_DAYS_MIN)).toBe(true);
-    expect(isValidSinceDays(SINCE_DAYS_MAX)).toBe(true);
-  });
-
-  it("accepts a typical mid-range value", () => {
-    expect(isValidSinceDays(7)).toBe(true);
-  });
-});

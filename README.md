@@ -5,7 +5,7 @@
 
 Model Context Protocol (MCP) server for the Datto BCDR (Backup Portal) API.
 Exposes SIRIS / Alto appliances, protected agents, recovery points, screenshot
-verifications, off-site sync status, alerts, and activity logs to AI assistants.
+verifications, off-site sync status, and alerts to AI assistants.
 
 ## Tools
 
@@ -20,7 +20,6 @@ verifications, off-site sync status, alerts, and activity logs to AI assistants.
 | `datto_bcdr_get_screenshot` | Fetch a screenshot PNG (returned as base64 image content) |
 | `datto_bcdr_get_offsite_status` | Off-site sync status for an appliance |
 | `datto_bcdr_list_alerts` | Portal alerts (date-range filtered) |
-| `datto_bcdr_list_activity` | Activity log (date-range filtered) |
 
 When the user omits required filters (date range, serial number, etc.) the
 server uses MCP elicitation to prompt for them.

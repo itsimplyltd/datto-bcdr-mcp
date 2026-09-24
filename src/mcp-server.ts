@@ -15,7 +15,7 @@ import {
   ReadResourceRequestSchema,
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import { DattoBcdrClient, type BcdrAsset, isValidSinceDays, SINCE_DAYS_MIN, SINCE_DAYS_MAX } from "./datto-api.js";
+import { DattoBcdrClient, type BcdrAsset } from "./datto-api.js";
 import { elicitSelection, elicitText } from "./utils/elicitation.js";
 import { wrapUntrustedContent } from "./utils/untrusted-content.js";
 import {
@@ -209,25 +209,6 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
               },
               since: { type: "string", description: "ISO 8601 start datetime (optional)" },
               until: { type: "string", description: "ISO 8601 end datetime (optional)" },
-              page: { type: "number", description: "Page number (default: 1)", default: 1 },
-              perPage: { type: "number", description: "Results per page (default: 250)", default: 250 },
-            },
-          },
-        },
-        {
-          name: "datto_bcdr_list_activity",
-          description:
-            `List activity log entries from the last \`sinceDays\` days (integer, ${SINCE_DAYS_MIN}-${SINCE_DAYS_MAX}, ` +
-            "default 7 — this is Datto's only filter on this endpoint, a lookback window in days, not a date; " +
-            "there is no `until`).",
-          inputSchema: {
-            type: "object",
-            properties: {
-              sinceDays: {
-                type: "number",
-                description: `Days to look back (${SINCE_DAYS_MIN}-${SINCE_DAYS_MAX}, default 7)`,
-                default: 7,
-              },
               page: { type: "number", description: "Page number (default: 1)", default: 1 },
               perPage: { type: "number", description: "Results per page (default: 250)", default: 250 },
             },
@@ -574,18 +555,6 @@ export function createMcpServer(credentialOverrides?: DattoBcdrCredentials): Ser
             range
           );
           return jsonResult(alerts);
-        }
-
-        case "datto_bcdr_list_activity": {
-          const params = (args ?? {}) as { sinceDays?: number; page?: number; perPage?: number };
-          const sinceDays = params.sinceDays ?? 7;
-          if (!isValidSinceDays(sinceDays)) {
-            return errorResult(
-              `sinceDays must be an integer between ${SINCE_DAYS_MIN} and ${SINCE_DAYS_MAX}, got ${JSON.stringify(params.sinceDays)}.`
-            );
-          }
-          const activity = await client.listActivity(sinceDays, { page: params.page, perPage: params.perPage });
-          return jsonResult(activity);
         }
 
         default:

@@ -12,11 +12,10 @@ describe('Datto BCDR MCP Server', () => {
       'datto_bcdr_get_screenshot',
       'datto_bcdr_get_offsite_status',
       'datto_bcdr_list_alerts',
-      'datto_bcdr_list_activity',
     ];
 
-    it('should define all 10 tools', () => {
-      expect(expectedTools).toHaveLength(10);
+    it('should define all 9 tools', () => {
+      expect(expectedTools).toHaveLength(9);
     });
 
     it('should include device tools', () => {
@@ -35,10 +34,9 @@ describe('Datto BCDR MCP Server', () => {
       expect(expectedTools).toContain('datto_bcdr_get_screenshot');
     });
 
-    it('should include offsite, alerts, and activity tools', () => {
+    it('should include offsite and alerts tools', () => {
       expect(expectedTools).toContain('datto_bcdr_get_offsite_status');
       expect(expectedTools).toContain('datto_bcdr_list_alerts');
-      expect(expectedTools).toContain('datto_bcdr_list_activity');
     });
   });
 

@@ -21,7 +21,6 @@ describe("untrusted-content marking", () => {
         "datto_bcdr_list_assets",
         "datto_bcdr_get_asset",
         "datto_bcdr_list_backups",
-        "datto_bcdr_list_activity",
         "datto_bcdr_get_offsite_status",
       ])
     );
@@ -77,8 +76,8 @@ describe("untrusted-content marking", () => {
   });
 
   it("stripUntrustedContentWrapper round-trips a wrapped payload back to the original", () => {
-    const original = '{"activity":[{"messageEN":"hello"}]}';
-    const wrapped = wrapUntrustedContent("datto_bcdr_list_activity", original);
+    const original = '{"backups":[{"errorMessage":"hello"}]}';
+    const wrapped = wrapUntrustedContent("datto_bcdr_list_backups", original);
     expect(stripUntrustedContentWrapper(wrapped)).toBe(original);
   });
 

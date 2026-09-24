@@ -396,24 +396,6 @@ export interface BcdrAlert {
   [key: string]: unknown;
 }
 
-export interface BcdrActivityLogEntry {
-  id?: string;
-  timestamp?: string;
-  requestId?: string;
-  targetType?: string;
-  targetId?: string;
-  targetDisplayName?: string;
-  clientName?: string;
-  interface?: string;
-  user?: string;
-  userRoles?: string[];
-  ipAddress?: string;
-  action?: string;
-  messageEN?: string;
-  success?: boolean;
-  [key: string]: unknown;
-}
-
 // ---------------------------------------------------------------------------
 // Pure helpers — exported for unit testing without hitting the network.
 // ---------------------------------------------------------------------------
@@ -449,30 +431,11 @@ export function unwrapAssetArray(response: unknown, volume: string): BcdrAsset {
   return first as BcdrAsset;
 }
 
-export const SINCE_DAYS_MIN = 1;
-export const SINCE_DAYS_MAX = 30;
-
-/**
- * `/report/activity-log` accepts exactly one filter, `since`, matched
- * server-side against `^\d+$` and documented as "an integer greater than 0
- * and less than 31 days" — i.e. a lookback window in days, not a date.
- * There is no `until`. Validate here so a bad value fails with a clear
- * message instead of Datto's error text (or, with no `since` sent at all,
- * a silent `count: 0`).
- */
-export function isValidSinceDays(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= SINCE_DAYS_MIN &&
-    value <= SINCE_DAYS_MAX
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Pagination — mirrors the upstream library's PaginatedIterable logic for
-// the three endpoints that actually paginate (/bcdr/device,
-// /bcdr/device/{s}/alert, /report/activity-log).
+// the two endpoints that actually paginate (/bcdr/device,
+// /bcdr/device/{s}/alert).
 // ---------------------------------------------------------------------------
 
 export interface PageParams {
@@ -573,10 +536,4 @@ export class DattoBcdrClient {
     }
   }
 
-  async listActivity(
-    sinceDays: number,
-    params?: PageParams
-  ): Promise<BcdrPaginatedResponse<BcdrActivityLogEntry>> {
-    return get(this.config, "/report/activity-log", { ...pageQuery(params), since: String(sinceDays) });
-  }
 }
