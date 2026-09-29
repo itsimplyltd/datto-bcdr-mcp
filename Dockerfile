@@ -12,6 +12,7 @@ COPY package*.json ./
 # No GitHub Packages dependency remains (node-datto-bcdr was dropped in
 # favor of src/datto-api.ts), so this install needs no registry auth.
 RUN npm ci --ignore-scripts
+RUN npm audit signatures
 
 COPY . .
 
