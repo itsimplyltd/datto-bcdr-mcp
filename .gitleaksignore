@@ -1,0 +1,2 @@
+# http.ts reads the S2S secret from the environment: `const secret = env.CONDUIT_S2S_SECRET ?? ""`. No literal. Reviewed false positive.
+2e7dc7682e47d00afc862c01df35754a34f2dd10:src/http.ts:generic-api-key:62
