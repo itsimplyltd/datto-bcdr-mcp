@@ -211,6 +211,9 @@ async function sendWithRetry(
   const url = buildUrl(config, path, params);
   const response = await fetch(url, {
     method: "GET",
+    // Never follow a vendor redirect: the Authorization header would travel
+    // with it to whatever host the 3xx names. A 3xx rejects the fetch.
+    redirect: "error",
     headers: {
       Authorization: authHeader(config),
       Accept: binary ? "image/jpeg, image/png, application/octet-stream, */*" : "application/json",
