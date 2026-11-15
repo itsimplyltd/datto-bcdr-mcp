@@ -24,3 +24,8 @@ targetRules = ["generic-api-key"]
 paths = ['''^test/fixtures/s2s-v3-vectors[.]json$''']
 regexTarget = "secret"
 regexes = ['''^[0-9a-f]{64}$''']
+
+# The ignore file itself quotes the flagged line in an earlier revision. Only that file.
+[[allowlists]]
+description = "gitleaksignore comments"
+paths = ['''^[.]gitleaksignore$''']
