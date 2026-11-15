@@ -59,14 +59,14 @@ const failureLimiter = new ReportRateLimiter();
  * Never logs or echoes the secret or its length.
  */
 export function resolveS2sSecret(env: NodeJS.ProcessEnv = process.env): string {
-  const secret = env.CONDUIT_S2S_SECRET ?? "";
-  if (secret.length < MIN_S2S_SECRET_LENGTH) {
+  const raw = env.CONDUIT_S2S_SECRET ?? "";
+  if (raw.length < MIN_S2S_SECRET_LENGTH) {
     throw new Error(
       "Refusing to start HTTP server: CONDUIT_S2S_SECRET must be set to at least 32 characters " +
         "(generate one with `openssl rand -hex 32`)."
     );
   }
-  return secret;
+  return raw;
 }
 
 /** Start-up line the security reviewer reads: effective minimum and header-rule mode. */
