@@ -1,0 +1,26 @@
+title = "datto-bcdr-mcp gitleaks config"
+
+[extend]
+useDefault = true
+
+# The vendored S2S v3 vectors (test/fixtures/s2s-v3-vectors.json, from MCP-Gateway)
+# use a fixed fake HMAC secret of the exact shape vector-s2s-<lowercase/digits>.
+# Both the file AND the exact value shape must hold; neither alone allows anything.
+[[allowlists]]
+description = "S2S v3 vectors: fake secret 'vector-s2s-<a-z0-9>'"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^test/fixtures/s2s-v3-vectors[.]json$''']
+regexTarget = "secret"
+regexes = ['''^vector-s2s-[a-z0-9]{8,}$''']
+
+# The vectors file records the canonical string, whose header lines end in a
+# sha256 hex digest (e.g. authorization:<64 hex>). Only that file, only a bare
+# 64-hex value.
+[[allowlists]]
+description = "S2S v3 vectors: sha256 digests inside canonical strings"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^test/fixtures/s2s-v3-vectors[.]json$''']
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{64}$''']
